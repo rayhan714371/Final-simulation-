@@ -126,9 +126,9 @@ end
 
 % Design LQR controller
 % State cost matrix
-Q = diag([10 10 10 5 5 5 10 10 1 1 1 0.1])    
+Q = diag([10 10 10 5 5 5 10 10 1 1 1 0.1]);    
 % Control cost matrix
-R = diag([1 0.1 0.1 0.1])            
+R = diag([1 0.1 0.1 0.1]);            
 
 % Compute LQR gain matrix
 [K, S, e] = lqr(A, B, Q, R);

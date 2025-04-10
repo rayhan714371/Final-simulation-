@@ -1,376 +1,204 @@
-%% 6 DOF Linearized UAV with Lumped Gaussian Uncertainty
-% This script provides a linearized UAV model in the form:
-% dot_x(t) = Ax(t) + Bu(t) + d(x,u) + w(t)
-% y(t) = Cx(t) + v(t)
-% where d(x,u) represents the lumped uncertainty (combining model uncertainty and nonlinear residuals)
-% w(t) represents process noise
-% and v(t) represents measurement noise
+% UAV Linearization without symbolic toolbox
+% State vector: [px, py, pz, vx, vy, vz, phi, theta, psi, phi_dot, theta_dot, psi_dot]
 
-%% UAV Physical Parameters
-m = 1.5;              % Mass (kg)
-g = 9.81;             % Gravity (m/s^2)
-L = 0.23;             % Arm length (m)
+% Parameters
+g = 9.81;    % Gravitational acceleration [m/s^2]
+m = 1.0;     % UAV mass [kg]
+Jx = 0.01;   % Moment of inertia around x-axis [kg.m^2]
+Jy = 0.01;   % Moment of inertia around y-axis [kg.m^2]
+Jz = 0.02;   % Moment of inertia around z-axis [kg.m^2]
 
-% Moments of inertia (kg.m^2)
-Ixx = 0.0211;
-Iyy = 0.0219;
-Izz = 0.0366;
+% Hover state (equilibrium point)
+x_eq = zeros(12, 1);
+% In hover, the only non-zero input is the thrust to counteract gravity
+F_eq = m * g;
+tau_phi_eq = 0;
+tau_theta_eq = 0;
+tau_psi_eq = 0;
+u_eq = [F_eq; tau_phi_eq; tau_theta_eq; tau_psi_eq];
 
-% Rotor and aerodynamic parameters
-kT = 1.091e-5;        % Thrust coefficient
-kD = 1.779e-7;        % Drag coefficient
-kf = 0.01;            % Friction coefficient
+% Define state indices for clarity
+IX_PX = 1;      % Position x
+IX_PY = 2;      % Position y
+IX_PZ = 3;      % Position z
+IX_VX = 4;      % Velocity x
+IX_VY = 5;      % Velocity y
+IX_VZ = 6;      % Velocity z
+IX_PHI = 7;     % Roll angle
+IX_THETA = 8;   % Pitch angle
+IX_PSI = 9;     % Yaw angle
+IX_PHI_DOT = 10;   % Roll rate
+IX_THETA_DOT = 11; % Pitch rate
+IX_PSI_DOT = 12;   % Yaw rate
 
-%% State and Control Vectors Definition
-% State vector x = [px; py; pz; phi; theta; psi; vx; vy; vz; p; q; r]
-% where:
-% (px, py, pz) - position in inertial frame
-% (phi, theta, psi) - Euler angles (roll, pitch, yaw)
-% (vx, vy, vz) - linear velocities in body frame
-% (p, q, r) - angular velocities in body frame
+% Define input indices
+IX_F = 1;       % Total thrust
+IX_TAU_PHI = 2; % Roll torque
+IX_TAU_THETA = 3; % Pitch torque
+IX_TAU_PSI = 4; % Yaw torque
 
-% Control input vector u = [F; tau_phi; tau_theta; tau_psi]
-% where:
-% F - total thrust
-% tau_phi - roll torque
-% tau_theta - pitch torque
-% tau_psi - yaw torque
-
-%% Linearization Point (Hover)
-% Define equilibrium state (hover condition)
-X_eq = zeros(12, 1);
-X_eq(3) = -2;  % Hover at 2 meters above ground
-
-% Define equilibrium input (hover thrust balances gravity)
-U_eq = [m*g; 0; 0; 0];
-
-%% Linearized State-Space Matrices
-% A matrix (state matrix)
+% State space matrices initialization
 A = zeros(12, 12);
-
-% Position derivatives
-A(1, 7) = 1;  % dx/dt = vx
-A(2, 8) = 1;  % dy/dt = vy
-A(3, 9) = 1;  % dz/dt = vz
-
-% Attitude kinematics at hover
-A(4, 10) = 1;  % dphi/dt = p
-A(5, 11) = 1;  % dtheta/dt = q
-A(6, 12) = 1;  % dpsi/dt = r
-
-% Velocity dynamics (linearized around hover)
-A(7, 5) = g;    % dvx/dt affected by pitch angle (gravity projection)
-A(8, 4) = -g;   % dvy/dt affected by roll angle (gravity projection)
-A(7, 7) = -kf/m;  % Damping in x direction
-A(8, 8) = -kf/m;  % Damping in y direction
-A(9, 9) = -kf/m;  % Damping in z direction
-
-% Angular velocity dynamics
-A(10, 10) = -0.01;  % Aerodynamic damping in roll
-A(11, 11) = -0.01;  % Aerodynamic damping in pitch
-A(12, 12) = -0.02;  % Aerodynamic damping in yaw
-
-% B matrix (input matrix)
 B = zeros(12, 4);
 
-% Thrust affects vertical acceleration (in body frame)
-B(9, 1) = -1/m;  % Negative because Z-axis points downward in body frame
+% Fill A matrix based on linearization
+% Position derivatives = velocity
+A(IX_PX, IX_VX) = 1;
+A(IX_PY, IX_VY) = 1;
+A(IX_PZ, IX_VZ) = 1;
 
-% Torques affect angular accelerations
-B(10, 2) = 1/Ixx;  % Roll torque
-B(11, 3) = 1/Iyy;  % Pitch torque
-B(12, 4) = 1/Izz;  % Yaw torque
+% Velocity derivatives from linearization
+% p(ddot)_x = -g*theta
+A(IX_VX, IX_THETA) = -g;
 
-% C matrix (output matrix)
-% Assuming all states are measurable
+% p(ddot)_y = g*phi
+A(IX_VY, IX_PHI) = g;
+
+% p(ddot)_z = -ΔF/m (where ΔF = F - F_eq)
+% This will be represented in B matrix
+
+% Angle derivatives = angular rates
+A(IX_PHI, IX_PHI_DOT) = 1;
+A(IX_THETA, IX_THETA_DOT) = 1;
+A(IX_PSI, IX_PSI_DOT) = 1;
+
+% Angular acceleration terms
+% phi(ddot) = tau_phi/J_x
+% theta(ddot) = tau_theta/J_y
+% psi(ddot) = tau_psi/J_z
+% These will be represented in B matrix
+
+% Fill B matrix based on linearization
+% Force impact on acceleration
+B(IX_VZ, IX_F) = -1/m;  % z-acceleration depends on thrust variation
+
+% Torques impact on angular accelerations
+B(IX_PHI_DOT, IX_TAU_PHI) = 1/Jx;
+B(IX_THETA_DOT, IX_TAU_THETA) = 1/Jy;
+B(IX_PSI_DOT, IX_TAU_PSI) = 1/Jz;
+
+% Define C matrix for output (assuming we can measure all states)
 C = eye(12);
 
-% D matrix (direct feedthrough)
-D = zeros(12, 4);
+% Define uncertainty covariance based on provided information
+% h(x,u) = [-g/2(ϕθ), g/6(ϕ^3), g/2(ϕ^2+θ^2), 0, 0, 0, 0, 0, 0, 0, 0, 0]'
 
-%% Noise Characteristics
-% Process noise covariance matrix Q
-% Process noise affects the state dynamics directly
-% Generally higher for velocity and angular states, lower for position states
-pos_proc_std = 0.01;      % Position process noise (m/s^2)
-angle_proc_std = 0.02;    % Angle process noise (rad/s^2)
-vel_proc_std = 0.05;      % Velocity process noise (m/s^2)
-angvel_proc_std = 0.1;    % Angular velocity process noise (rad/s^2)
+% Variance parameters for states
+sigma_phi = 0.1;    % Standard deviation of phi [rad]
+sigma_theta = 0.1;  % Standard deviation of theta [rad]
+sigma_psi = 0.1;    % Standard deviation of psi [rad]
 
-% Create diagonal process noise covariance matrix
-Q = diag([0.0001 0.0001 0.0001 0.0004 0.0004 0.0004 0.0025 0.0025 0.0025 0.01 0.01 0.01]);  
+% Calculate variance for each uncertainty component
+% For h_p(ddot)_x = -g/2(ϕθ)
+var_h_px = (g/2)^2 * (sigma_phi^2 * sigma_theta^2);
 
-% Measurement noise covariance matrix R
-pos_meas_std = 0.05;      % Position measurement noise (m)
-angle_meas_std = 0.02;    % Angle measurement noise (rad)
-vel_meas_std = 0.1;       % Velocity measurement noise (m/s)
-angvel_meas_std = 0.05;   % Angular velocity measurement noise (rad/s)
+% For h_p(ddot)_y = g/6(ϕ^3)
+var_h_py = (g/6)^2 * 15 * sigma_phi^6;
 
-% Create diagonal measurement noise covariance matrix
-R = diag([0.0025 0.0025 0.0025 0.0004 0.0004 0.0004 0.01 0.01 0.01 0.0025 0.0025 0.0025]);
+% For h_p(ddot)_z = g/2(ϕ^2+θ^2)
+var_h_pz = (g/2)^2 * (2*sigma_phi^4 + 2*sigma_theta^4);
 
-% Create input process noise covariance (optional)
-input_noise_std = 0.1;    % Input noise standard deviation
-Qu = input_noise_std^2 * eye(4);  % Input noise covariance
+% Define Q_h (covariance matrix for the lumped uncertainty)
+Q_h = zeros(12);
+Q_h(IX_VX, IX_VX) = var_h_px;
+Q_h(IX_VY, IX_VY) = var_h_py;
+Q_h(IX_VZ, IX_VZ) = var_h_pz;
 
-%% Create Linearized State-Space Model
-sys_lin = ss(A, B, C, D);
-
-% Display linearized model properties
+% Display the resulting linearized model
 disp('Linearized UAV Model:');
-disp('A matrix (State Matrix):');
+disp('A matrix:');
 disp(A);
-disp('B matrix (Input Matrix):');
+disp('B matrix:');
 disp(B);
-disp('C matrix (Output Matrix):');
+disp('C matrix:');
 disp(C);
-disp('Process Noise Covariance Matrix Q:');
-disp(Q);
-disp('Measurement Noise Covariance Matrix R:');
-disp(R);
+disp('Linearization uncertainty covariance Q_h:');
+disp(Q_h);
 
-%% Lumped Uncertainty Parameters
-% Define Gaussian model for lumped uncertainty (nonlinear residuals + model uncertainty)
-% The lumped uncertainty covariance is state-dependent and has different values for different state components
+% Define a function that calculates the nonlinear dynamics
+function x_dot = uav_dynamics_nonlinear(x, u)
+    % Parameters
+    g = 9.81;    % Gravitational acceleration [m/s^2]
+    m = 1.0;     % UAV mass [kg]
+    Jx = 0.01;   % Moment of inertia around x-axis [kg.m^2]
+    Jy = 0.01;   % Moment of inertia around y-axis [kg.m^2]
+    Jz = 0.02;   % Moment of inertia around z-axis [kg.m^2]
+    
+    % Extract states
+    phi = x(7);      % Roll angle
+    theta = x(8);    % Pitch angle
+    psi = x(9);      % Yaw angle
+    vx = x(4);       % Velocity x
+    vy = x(5);       % Velocity y
+    vz = x(6);       % Velocity z
+    phi_dot = x(10);    % Roll rate
+    theta_dot = x(11);  % Pitch rate
+    psi_dot = x(12);    % Yaw rate
+    
+    % Extract inputs
+    F = u(1);         % Total thrust
+    tau_phi = u(2);   % Roll torque
+    tau_theta = u(3); % Pitch torque
+    tau_psi = u(4);   % Yaw torque
+    
+    % Initialize derivative vector
+    x_dot = zeros(12, 1);
+    
+    % Position derivatives
+    x_dot(1) = vx;
+    x_dot(2) = vy;
+    x_dot(3) = vz;
+    
+    % Velocity derivatives (nonlinear model)
+    x_dot(4) = -cos(phi) * sin(theta) * F/m;
+    x_dot(5) = sin(phi) * F/m;
+    x_dot(6) = g - cos(phi) * cos(theta) * F/m;
+    
+    % Angle derivatives
+    x_dot(7) = phi_dot;
+    x_dot(8) = theta_dot;
+    x_dot(9) = psi_dot;
+    
+    % Angular acceleration derivatives
+    x_dot(10) = tau_phi/Jx;
+    x_dot(11) = tau_theta/Jy;
+    x_dot(12) = tau_psi/Jz;
+end
 
-% Base covariance values for the lumped uncertainty
-% These values represent a combination of nonlinear residuals and model uncertainty
-base_uncertainty = zeros(12, 1);
-base_uncertainty(1:3) = 0.01;     % Position uncertainty (m/s^2)
-base_uncertainty(4:6) = 0.02;     % Angle uncertainty (rad/s^2)
-base_uncertainty(7:9) = 0.05;     % Velocity uncertainty (m/s^2)
-base_uncertainty(10:12) = 0.1;    % Angular velocity uncertainty (rad/s^2)
-
-% State-dependency factors
-% These factors increase the uncertainty as the state deviates from equilibrium
-pos_factor = 0.02;         % Position scaling factor
-angle_factor = 0.5;        % Angle scaling factor
-vel_factor = 0.1;          % Velocity scaling factor
-angvel_factor = 0.2;       % Angular velocity scaling factor
-
-% Control-dependency factors
-% These factors increase the uncertainty as the control deviates from equilibrium
-thrust_factor = 0.05;      % Thrust scaling factor
-torque_factor = 0.1;       % Torque scaling factor
-
-%% Lumped Uncertainty Function
-% This function generates the lumped uncertainty as Gaussian noise
-% The covariance matrix is state and control dependent
-function d_xu = lumped_uncertainty(x, u)
-    % Pull parameters from base workspace
-    base_uncertainty = evalin('base', 'base_uncertainty');
-    X_eq = evalin('base', 'X_eq');
-    U_eq = evalin('base', 'U_eq');
-    pos_factor = evalin('base', 'pos_factor');
-    angle_factor = evalin('base', 'angle_factor');
-    vel_factor = evalin('base', 'vel_factor');
-    angvel_factor = evalin('base', 'angvel_factor');
-    thrust_factor = evalin('base', 'thrust_factor');
-    torque_factor = evalin('base', 'torque_factor');
+% To validate the linearization, we can implement a simple simulation
+% that compares the nonlinear and linearized models
+function validate_linearization()
+    % Parameters
+    dt = 0.01;               % Time step [s]
+    t_end = 5;               % Simulation duration [s]
+    t = 0:dt:t_end;          % Time vector
+    n_steps = length(t);     % Number of simulation steps
     
-    % Calculate deviations from equilibrium
-    x_dev = abs(x - X_eq);
-    u_dev = abs(u - U_eq);
+    % Initial states (small perturbations from hover)
+    x_nonlin = zeros(12, n_steps);
+    x_linear = zeros(12, n_steps);
     
-    % Calculate state-dependent scaling factors
-    scaling = ones(12, 1);
+    % Add small initial perturbation
+    x_nonlin(:,1) = [0; 0; 0; 0.1; 0; 0; 0.05; 0.05; 0; 0; 0; 0];
+    x_linear(:,1) = x_nonlin(:,1);
     
-    % Position scaling (increases with position deviation)
-    scaling(1:3) = 1 + pos_factor * sum(x_dev(1:3));
+    % Equilibrium input (just enough thrust to hover)
+    u_eq = [9.81; 0; 0; 0];  % [F, tau_phi, tau_theta, tau_psi]
     
-    % Angle scaling (increases significantly with angle deviation)
-    scaling(4:6) = 1 + angle_factor * sum(x_dev(4:6));
+    % Get linearized model matrices
+    % ... (these would be calculated as above)
     
-    % Velocity scaling
-    scaling(7:9) = 1 + vel_factor * sum(x_dev(7:9));
-    
-    % Angular velocity scaling
-    scaling(10:12) = 1 + angvel_factor * sum(x_dev(10:12));
-    
-    % Control input scaling
-    % Thrust affects primarily vertical dynamics
-    thrust_scaling = 1 + thrust_factor * u_dev(1);
-    scaling(9) = scaling(9) * thrust_scaling;
-    
-    % Torques affect angular dynamics
-    for i = 2:4
-        scaling(8+i) = scaling(8+i) * (1 + torque_factor * u_dev(i));
+    % Simulate both models
+    for i = 1:(n_steps-1)
+        % Nonlinear simulation
+        x_dot_nonlin = uav_dynamics_nonlinear(x_nonlin(:,i), u_eq);
+        x_nonlin(:,i+1) = x_nonlin(:,i) + x_dot_nonlin * dt;
+        
+        % Linear simulation
+        x_dot_linear = A * (x_linear(:,i) - x_eq) + B * (u_eq - u_eq);
+        x_linear(:,i+1) = x_linear(:,i) + x_dot_linear * dt;
     end
     
-    % Calculate the uncertainty covariance
-    sigma = base_uncertainty .* scaling;
-    
-    % Generate Gaussian distributed uncertainty
-    d_xu = randn(12, 1) .* sigma;
-    
-    % Add correlation between similar states (optional)
-    % This creates more realistic coupled dynamics
-    correlation_matrix = eye(12);
-    
-    % Correlate x-y position uncertainties
-    correlation_matrix(1, 2) = 0.3;
-    correlation_matrix(2, 1) = 0.3;
-    
-    % Correlate roll-pitch uncertainties
-    correlation_matrix(4, 5) = 0.4;
-    correlation_matrix(5, 4) = 0.4;
-    
-    % Correlate linear velocities
-    correlation_matrix(7, 8) = 0.5;
-    correlation_matrix(8, 7) = 0.5;
-    
-    % Correlate angular velocities
-    correlation_matrix(10, 11) = 0.6;
-    correlation_matrix(11, 10) = 0.6;
-    
-    % Apply correlation (simplified approach)
-    for i = 1:12
-        for j = i+1:12
-            if correlation_matrix(i, j) > 0
-                avg_effect = correlation_matrix(i, j) * 0.5 * (d_xu(i) + d_xu(j));
-                d_xu(i) = (1 - correlation_matrix(i, j)) * d_xu(i) + avg_effect;
-                d_xu(j) = (1 - correlation_matrix(i, j)) * d_xu(j) + avg_effect;
-            end
-        end
-    end
+    % One could plot the results to compare the models
+    % This would be done in a separate function or script
 end
-
-%% Function to generate measurement with noise
-function y = measurement_with_noise(x)
-    % Get the output matrix C from base workspace
-    C = eye(12);  % Assuming all states are measured
-    
-    % Get noise covariance matrix from base workspace
-    R = evalin('base', 'R');
-    
-    % Generate Gaussian noise for measurements
-    v = randn(12, 1) .* sqrt(diag(R));
-    
-    % Calculate noisy measurements
-    y = C*x + v;
-end
-
-%% Function to generate process noise
-function w = process_noise()
-    % Get process noise covariance from base workspace
-    Q = evalin('base', 'Q');
-    
-    % Generate Gaussian process noise
-    w = randn(12, 1) .* sqrt(diag(Q));
-end
-
-%% Sample simulation with lumped uncertainty and noise
-function [t, x_true, y_noisy] = simulate_uav_with_uncertainty(tspan, x0, u)
-    % Get model matrices
-    A = evalin('base', 'A');
-    B = evalin('base', 'B');
-    
-    % Time step for simulation
-    dt = tspan(2) - tspan(1);
-    num_steps = length(tspan);
-    
-    % Preallocate arrays
-    x_true = zeros(12, num_steps);
-    y_noisy = zeros(12, num_steps);
-    x_true(:,1) = x0;
-    
-    % Generate noisy measurements for initial state
-    y_noisy(:,1) = measurement_with_noise(x0);
-    
-    % Simulate system with Euler integration
-    for k = 1:num_steps-1
-        % Generate process noise for this time step
-        w = process_noise();
-        
-        % Generate lumped uncertainty (model uncertainty + nonlinear residuals)
-        d = lumped_uncertainty(x_true(:,k), u);
-        
-        % Update state with process noise and lumped uncertainty
-        x_true(:,k+1) = x_true(:,k) + dt * (A*x_true(:,k) + B*u + d + w);
-        
-        % Generate noisy measurement
-        y_noisy(:,k+1) = measurement_with_noise(x_true(:,k+1));
-    end
-    
-    t = tspan;
-end
-
-%% Robust Kalman Filter Implementation considering lumped uncertainty
-function [x_est, P] = robust_kalman_filter(y_noisy, u, tspan)
-    % Get model matrices
-    A = evalin('base', 'A');
-    B = evalin('base', 'B');
-    C = evalin('base', 'C');
-    Q = evalin('base', 'Q');
-    R = evalin('base', 'R');
-    
-    % Base uncertainty parameters
-    base_uncertainty = evalin('base', 'base_uncertainty');
-    
-    % Time step for simulation
-    dt = tspan(2) - tspan(1);
-    num_steps = length(tspan);
-    
-    % Initial state estimate and covariance
-    x_est = zeros(12, num_steps);
-    x_est(:,1) = zeros(12, 1);  % Initial state estimate (zero or user-defined)
-    P = cell(num_steps, 1);
-    P{1} = eye(12);  % Initial covariance estimate (identity or user-defined)
-    
-    % Discrete-time system matrices (Euler approximation)
-    Ad = eye(12) + dt*A;
-    Bd = dt*B;
-    
-    % Process noise covariance (discretized)
-    Qd = dt*Q;
-    
-    % Kalman filter iterations
-    for k = 1:num_steps-1
-        % Estimate the lumped uncertainty covariance based on current state estimate
-        % This is a simplified approach where we use the base uncertainty values
-        % scaled by a factor representing the deviation from equilibrium
-        x_dev = abs(x_est(:,k) - evalin('base', 'X_eq'));
-        scaling = 1 + 0.1 * sum(x_dev);
-        
-        % Enhanced process noise covariance accounting for lumped uncertainty
-        Q_enhanced = Qd + dt^2 * diag((scaling * base_uncertainty).^2);
-        
-        % Predict step with augmented process noise
-        x_pred = Ad*x_est(:,k) + Bd*u;
-        P_pred = Ad*P{k}*Ad' + Q_enhanced;
-        
-        % Update step (measurement)
-        K = P_pred*C'/(C*P_pred*C' + R);  % Kalman gain
-        x_est(:,k+1) = x_pred + K*(y_noisy(:,k+1) - C*x_pred);
-        P{k+1} = (eye(12) - K*C)*P_pred;
-    end
-end
-
-%% Example usage:
-% % Define simulation parameters
-% tspan = 0:0.01:10;  % 10 seconds with 0.01s time step
-% x0 = zeros(12, 1);  % Initial state at origin
-% u = [m*g + 0.1; 0.01; 0.01; 0];  % Control input (slightly off from hover)
-% 
-% % Run simulation with lumped uncertainty
-% [t, x_true, y_noisy] = simulate_uav_with_uncertainty(tspan, x0, u);
-% 
-% % Run robust Kalman filter accounting for lumped uncertainty
-% [x_est, P] = robust_kalman_filter(y_noisy, u, tspan);
-% 
-% % Plot results
-% figure;
-% subplot(3,1,1);
-% plot(t, x_true(1,:), 'b-', t, x_est(1,:), 'r--');
-% legend('True x position', 'Estimated x position');
-% title('UAV Position Tracking with Lumped Uncertainty');
-% 
-% subplot(3,1,2);
-% plot(t, x_true(4,:), 'b-', t, x_est(4,:), 'r--');
-% legend('True roll angle', 'Estimated roll angle');
-% title('UAV Attitude Tracking');
-% 
-% subplot(3,1,3);
-% plot(t, x_true(7,:), 'b-', t, x_est(7,:), 'r--');
-% legend('True velocity (x)', 'Estimated velocity (x)');
-% title('UAV Velocity Tracking');

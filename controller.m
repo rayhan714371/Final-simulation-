@@ -20,7 +20,7 @@ Q_h = uav_model.Q_h; % Linearization error covariance
 %% LQR Controller Design
 % Define Q and R matrices (tuning parameters)
 Q = diag([10, 10, 10, 1, 1, 1, 100, 100, 100, 10, 10, 10]); % Penalize states
-R = diag([1, 1, 1, 1]); % Penalize inputs
+R = diag([10, 10, 10, 10]); % Penalize inputs
 
 % Solve for optimal gain matrix K
 [K, ~, ~] = lqr(A, B, Q, R);
@@ -137,47 +137,7 @@ ylabel('Angle (rad)');
 grid on;
 legend('\phi', '\theta', '\psi');
 
-% Kalman filter implementation could go here for state estimation.
-% Implementing a basic Kalman filter for state estimation
-% State and measurement noise covariances
-Q_kf = Q_w + Q_h; % Combined process noise and linearization error
-R_kf = R_v;      % Measurement noise
 
-% Initialize Kalman filter
-x_est = zeros(size(A, 1), length(t));
-x_est(:, 1) = x0; % Initial state estimate
-P = eye(size(A, 1)); % Initial error covariance
-
-% Kalman filter iterations
-for i = 2:length(t)
-    % Prediction step
-    x_pred = A * x_est(:, i-1) + B * (-K * x_est(:, i-1));
-    P_pred = A * P * A' + Q_kf;
-    
-    % Update step
-    y = y_full(i, :)'; % Noisy measurement
-    S = C * P_pred * C' + R_kf;
-    K_gain = P_pred * C' / S;
-    x_est(:, i) = x_pred + K_gain * (y - C * x_pred);
-    P = (eye(size(A, 1)) - K_gain * C) * P_pred;
-end
-
-% Plot Kalman filter results
-figure;
-subplot(2,1,1);
-plot(t, x_full(:,7:9)); % Original noisy state
-title('Noisy States - Attitude');
-ylabel('Angle (rad)');
-grid on;
-legend('\phi', '\theta', '\psi');
-
-subplot(2,1,2);
-plot(t, x_est(7:9, :)'); % Filtered estimate
-title('Kalman Filter Estimate - Attitude');
-xlabel('Time (s)');
-ylabel('Angle (rad)');
-grid on;
-legend('\phi', '\theta', '\psi');
 
 %% Local Functions
 % Linearized system dynamics with linearization error

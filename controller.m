@@ -1,251 +1,224 @@
-% UAV LQR Controller Design
-% Date: 2025-04-10
-% Author: rayhan714371
+%% UAV LQR Controller Design and Validation
+% This script designs an LQR controller for a linearized UAV model,
+% validates its performance, and simulates the closed-loop system.
 
-% Load linearized model parameters
-% If running separately, uncomment and run linearize_uav_model.m first
+clear;
+clc;
 
-% Parameters
-g = 9.81;    % Gravitational acceleration [m/s^2]
-m = 1.0;     % UAV mass [kg]
-Jx = 0.01;   % Moment of inertia around x-axis [kg.m^2]
-Jy = 0.01;   % Moment of inertia around y-axis [kg.m^2]
-Jz = 0.02;   % Moment of inertia around z-axis [kg.m^2]
+%% Load Linearized UAV Model
+% Assuming the linearized model is saved in 'uav_model_linearized.mat'
+load('uav_model_linearized.mat'); % Contains A, B, C, D, params, etc.
 
-% Define state indices for clarity
-IX_PX = 1;      % Position x
-IX_PY = 2;      % Position y
-IX_PZ = 3;      % Position z
-IX_VX = 4;      % Velocity x
-IX_VY = 5;      % Velocity y
-IX_VZ = 6;      % Velocity z
-IX_PHI = 7;     % Roll angle
-IX_THETA = 8;   % Pitch angle
-IX_PSI = 9;     % Yaw angle
-IX_PHI_DOT = 10;   % Roll rate
-IX_THETA_DOT = 11; % Pitch rate
-IX_PSI_DOT = 12;   % Yaw rate
+% Extract system matrices
+A = uav_model.A;
+B = uav_model.B;
+C = uav_model.C;
+D = uav_model.D;
+params = uav_model.params;
+Q_h = uav_model.Q_h; % Linearization error covariance
 
-% Define input indices
-IX_F = 1;       % Total thrust
-IX_TAU_PHI = 2; % Roll torque
-IX_TAU_THETA = 3; % Pitch torque
-IX_TAU_PSI = 4; % Yaw torque
+%% LQR Controller Design
+% Define Q and R matrices (tuning parameters)
+Q = diag([10, 10, 10, 1, 1, 1, 100, 100, 100, 10, 10, 10]); % Penalize states
+R = diag([1, 1, 1, 1]); % Penalize inputs
 
-% Hover state (equilibrium point)
-x_eq = zeros(12, 1);
-% In hover, the only non-zero input is the thrust to counteract gravity
-F_eq = m * g;
-tau_phi_eq = 0;
-tau_theta_eq = 0;
-tau_psi_eq = 0;
-u_eq = [F_eq; tau_phi_eq; tau_theta_eq; tau_psi_eq];
+% Solve for optimal gain matrix K
+[K, ~, ~] = lqr(A, B, Q, R);
 
-% State space matrices initialization
-A = zeros(12, 12);
-B = zeros(12, 4);
-
-% Fill A matrix based on linearization
-% Position derivatives = velocity
-A(IX_PX, IX_VX) = 1;
-A(IX_PY, IX_VY) = 1;
-A(IX_PZ, IX_VZ) = 1;
-
-% Velocity derivatives from linearization
-% p(ddot)_x = -g*theta
-A(IX_VX, IX_THETA) = -g;
-
-% p(ddot)_y = g*phi
-A(IX_VY, IX_PHI) = g;
-
-% p(ddot)_z = -ΔF/m (where ΔF = F - F_eq)
-% This will be represented in B matrix
-
-% Angle derivatives = angular rates
-A(IX_PHI, IX_PHI_DOT) = 1;
-A(IX_THETA, IX_THETA_DOT) = 1;
-A(IX_PSI, IX_PSI_DOT) = 1;
-
-% Angular acceleration terms
-% phi(ddot) = tau_phi/J_x
-% theta(ddot) = tau_theta/J_y
-% psi(ddot) = tau_psi/J_z
-% These will be represented in B matrix
-
-% Fill B matrix based on linearization
-% Force impact on acceleration
-B(IX_VZ, IX_F) = -1/m;  % z-acceleration depends on thrust variation
-
-% Torques impact on angular accelerations
-B(IX_PHI_DOT, IX_TAU_PHI) = 1/Jx;
-B(IX_THETA_DOT, IX_TAU_THETA) = 1/Jy;
-B(IX_PSI_DOT, IX_TAU_PSI) = 1/Jz;
-
-% Define C matrix for output (assuming we can measure all states)
-C = eye(12);
-
-% Define D matrix (direct feedthrough)
-D = zeros(12, 4);
-
-% Create state-space model
-uav_ss = ss(A, B, C, D);
-
-% Check controllability
-Co = ctrb(A, B);
-disp('Rank of controllability matrix:');
-rank_Co = rank(Co);
-disp(rank_Co);
-if rank_Co == size(A, 1)
-    disp('System is controllable');
-else
-    disp('System is not fully controllable');
-    % Identify the uncontrollable modes
-    [T, A_can] = ctrbf(A, B);
-    % Display uncontrollable modes
-    eig_uncontrollable = eig(A_can(rank_Co+1:end, rank_Co+1:end));
-    disp('Uncontrollable eigenvalues:');
-    disp(eig_uncontrollable);
-end
-
-% Check observability
-Ob = obsv(A, C);
-disp('Rank of observability matrix:');
-rank_Ob = rank(Ob);
-disp(rank_Ob);
-if rank_Ob == size(A, 1)
-    disp('System is observable');
-else
-    disp('System is not fully observable');
-    % Identify the unobservable modes
-    [T, A_can] = obsvf(A, C);
-    % Display unobservable modes
-    eig_unobservable = eig(A_can(rank_Ob+1:end, rank_Ob+1:end));
-    disp('Unobservable eigenvalues:');
-    disp(eig_unobservable);
-end
-
-% Design LQR controller
-% State cost matrix
-Q = diag([10 10 10 5 5 5 10 10 1 1 1 0.1]);    
-% Control cost matrix
-R = diag([1 0.1 0.1 0.1]);            
-
-% Compute LQR gain matrix
-[K, S, e] = lqr(A, B, Q, R);
-
-% Display LQR gain matrix
-disp('LQR Gain Matrix:');
+% Display the gain matrix
+disp('LQR Gain Matrix K:');
 disp(K);
 
-% Closed loop system
-A_cl = A - B*K;
-sys_cl = ss(A_cl, B, C, D);
+%% Validate LQR Controller - Closed-Loop Stability
+% Compute closed-loop system matrix
+A_cl = A - B * K;
 
-% System eigenvalues
-disp('Open-loop eigenvalues:');
-disp(eig(A));
-disp('Closed-loop eigenvalues:');
-disp(eig(A_cl));
+% Check eigenvalues of the closed-loop system
+eigenvalues = eig(A_cl);
+disp('Closed-Loop Eigenvalues:');
+disp(eigenvalues);
 
-% Simulate the closed-loop response
-t = 0:0.01:5;  % Simulation time (5 seconds)
-
-% Initial state deviation from hover
-x0 = zeros(12, 1);
-x0(IX_PX) = 1;     % 1m error in x position
-x0(IX_PZ) = -0.5;  % -0.5m error in z position
-x0(IX_PSI) = 0.2;  % 0.2 rad error in yaw angle
-
-% Step response
-[y, t, x] = initial(sys_cl, x0, t);
-
-% Plot the position response
-figure(1);
-subplot(3, 1, 1);
-plot(t, y(:, IX_PX));
-title('X Position');
-xlabel('Time (s)');
-ylabel('Position (m)');
-grid on;
-
-subplot(3, 1, 2);
-plot(t, y(:, IX_PY));
-title('Y Position');
-xlabel('Time (s)');
-ylabel('Position (m)');
-grid on;
-
-subplot(3, 1, 3);
-plot(t, y(:, IX_PZ));
-title('Z Position');
-xlabel('Time (s)');
-ylabel('Position (m)');
-grid on;
-
-% Plot the attitude response
-figure(2);
-subplot(3, 1, 1);
-plot(t, y(:, IX_PHI) * 180/pi);
-title('Roll Angle');
-xlabel('Time (s)');
-ylabel('Angle (deg)');
-grid on;
-
-subplot(3, 1, 2);
-plot(t, y(:, IX_THETA) * 180/pi);
-title('Pitch Angle');
-xlabel('Time (s)');
-ylabel('Angle (deg)');
-grid on;
-
-subplot(3, 1, 3);
-plot(t, y(:, IX_PSI) * 180/pi);
-title('Yaw Angle');
-xlabel('Time (s)');
-ylabel('Angle (deg)');
-grid on;
-
-% Calculate control inputs during the simulation
-u = zeros(4, length(t));
-for i = 1:length(t)
-    % Control law: u = u_eq - K * (x - x_eq)
-    % Since x_eq is zero, u = u_eq - K * x
-    u(:, i) = u_eq - K * x(i, :)';
+if all(real(eigenvalues) < 0)
+    disp('Closed-loop system is stable.');
+else
+    disp('Closed-loop system is unstable!');
 end
 
-% Plot control inputs
-figure(3);
-subplot(4, 1, 1);
-plot(t, u(IX_F, :));
-title('Thrust');
-xlabel('Time (s)');
-ylabel('Force (N)');
-grid on;
+%% Simulate the Linearized Model
+% Define simulation parameters
+tspan = 0:0.01:10; % Time vector (0 to 10 seconds)
+x0 = [1; 0; 0; 0; 0; 0; 0.1; 0; 0; 0; 0; 0]; % Initial disturbance
 
-subplot(4, 1, 2);
-plot(t, u(IX_TAU_PHI, :));
-title('Roll Torque');
-xlabel('Time (s)');
-ylabel('Torque (Nm)');
-grid on;
+% Simulate the closed-loop linear system
+[t, x_linear] = ode45(@(t, x) linearized_dynamics(t, x, A, B, K, Q_h), tspan, x0);
 
-subplot(4, 1, 3);
-plot(t, u(IX_TAU_THETA, :));
-title('Pitch Torque');
+% Plot results
+figure;
+plot(t, x_linear);
 xlabel('Time (s)');
-ylabel('Torque (Nm)');
+ylabel('States');
+title('Linear System Response with LQR Control (including linearization error)');
 grid on;
+legend('p_x', 'p_y', 'p_z', 'v_x', 'v_y', 'v_z', '\phi', '\theta', '\psi', '\omega_x', '\omega_y', '\omega_z');
 
-subplot(4, 1, 4);
-plot(t, u(IX_TAU_PSI, :));
-title('Yaw Torque');
+%% Simulate the Nonlinear Model
+% Simulate the nonlinear system
+[t, x_nonlinear] = ode45(@(t, x) nonlinear_uav(t, x, K, params), tspan, x0);
+
+% Plot nonlinear simulation results
+figure;
+plot(t, x_nonlinear);
 xlabel('Time (s)');
-ylabel('Torque (Nm)');
+ylabel('States');
+title('Nonlinear System Response with LQR Control');
 grid on;
+legend('p_x', 'p_y', 'p_z', 'v_x', 'v_y', 'v_z', '\phi', '\theta', '\psi', '\omega_x', '\omega_y', '\omega_z');
 
-% Function to simulate the closed-loop system with the nonlinear model
-function simulate_nonlinear_vs_linear()
-    % This function would implement a nonlinear simulation
-    % with the LQR controller for comparison
-    % Not fully implemented in this code
+%% Robustness to Noise and Uncertainty
+% Define noise covariances
+Q_w = uav_model.Q_w; % Process noise covariance
+R_v = uav_model.R_v; % Measurement noise covariance
+
+% Add process noise, measurement noise, and linearization error
+process_noise = mvnrnd(zeros(size(A, 1), 1), Q_w, length(t))';
+measurement_noise = mvnrnd(zeros(size(C, 1), 1), R_v, length(t))';
+linearization_error = mvnrnd(zeros(size(A, 1), 1), Q_h, length(t))';
+
+% Simulate with all uncertainties using manual integration
+dt = tspan(2) - tspan(1);
+x_full = zeros(length(t), size(A, 1));
+x_full(1, :) = x0';
+
+for i = 1:length(t)-1
+    % Current state and control
+    x_curr = x_full(i, :)';
+    u = -K * x_curr;
+    
+    % Compute derivative with all uncertainties
+    dx = (A - B * K) * x_curr + linearization_error(:, i) + process_noise(:, i);
+    
+    % Euler integration
+    x_full(i+1, :) = x_curr' + dx' * dt;
+end
+
+% Add measurement noise for observed outputs
+y_full = x_full + measurement_noise';
+
+% Plot comprehensive results
+figure;
+plot(t, x_full);
+xlabel('Time (s)');
+ylabel('States');
+title('Linear System Response with All Uncertainties (h(x,u), Q_w, R_v)');
+grid on;
+legend('p_x', 'p_y', 'p_z', 'v_x', 'v_y', 'v_z', '\phi', '\theta', '\psi', '\omega_x', '\omega_y', '\omega_z');
+
+% Comparison between linear model, nonlinear model, and model with uncertainties
+figure;
+subplot(3,1,1);
+plot(t, x_linear(:,7:9)); % Plot attitude states (phi, theta, psi)
+title('Linear Model - Attitude');
+ylabel('Angle (rad)');
+grid on;
+legend('\phi', '\theta', '\psi');
+
+subplot(3,1,2);
+plot(t, x_nonlinear(:,7:9)); % Plot attitude states from nonlinear model
+title('Nonlinear Model - Attitude');
+ylabel('Angle (rad)');
+grid on;
+legend('\phi', '\theta', '\psi');
+
+subplot(3,1,3);
+plot(t, x_full(:,7:9)); % Plot attitude states with all uncertainties
+title('Model with All Uncertainties - Attitude');
+xlabel('Time (s)');
+ylabel('Angle (rad)');
+grid on;
+legend('\phi', '\theta', '\psi');
+
+% Kalman filter implementation could go here for state estimation.
+% Implementing a basic Kalman filter for state estimation
+% State and measurement noise covariances
+Q_kf = Q_w + Q_h; % Combined process noise and linearization error
+R_kf = R_v;      % Measurement noise
+
+% Initialize Kalman filter
+x_est = zeros(size(A, 1), length(t));
+x_est(:, 1) = x0; % Initial state estimate
+P = eye(size(A, 1)); % Initial error covariance
+
+% Kalman filter iterations
+for i = 2:length(t)
+    % Prediction step
+    x_pred = A * x_est(:, i-1) + B * (-K * x_est(:, i-1));
+    P_pred = A * P * A' + Q_kf;
+    
+    % Update step
+    y = y_full(i, :)'; % Noisy measurement
+    S = C * P_pred * C' + R_kf;
+    K_gain = P_pred * C' / S;
+    x_est(:, i) = x_pred + K_gain * (y - C * x_pred);
+    P = (eye(size(A, 1)) - K_gain * C) * P_pred;
+end
+
+% Plot Kalman filter results
+figure;
+subplot(2,1,1);
+plot(t, x_full(:,7:9)); % Original noisy state
+title('Noisy States - Attitude');
+ylabel('Angle (rad)');
+grid on;
+legend('\phi', '\theta', '\psi');
+
+subplot(2,1,2);
+plot(t, x_est(7:9, :)'); % Filtered estimate
+title('Kalman Filter Estimate - Attitude');
+xlabel('Time (s)');
+ylabel('Angle (rad)');
+grid on;
+legend('\phi', '\theta', '\psi');
+
+%% Local Functions
+% Linearized system dynamics with linearization error
+function dx = linearized_dynamics(t, x, A, B, K, Q_h)
+    % Control law u = -Kx
+    u = -K * x;
+    
+    % Linearized dynamics with linearization error
+    % Generate a random sample from the linearization error distribution
+    h_xu = mvnrnd(zeros(length(x), 1), Q_h)';
+    
+    % Calculate state derivative: dx/dt = (A-BK)x + h(x,u)
+    dx = (A - B * K) * x + h_xu;
+end
+
+% Nonlinear UAV dynamics
+function dx = nonlinear_uav(t, x, K, params)
+    % States: x = [p_x; p_y; p_z; v_x; v_y; v_z; phi; theta; psi; omega_x; omega_y; omega_z]
+    % Control: u = -K * x
+    u = -K * x; % LQR control law
+    
+    % Extract states
+    phi = x(7); theta = x(8); psi = x(9);
+    v_x = x(4); v_y = x(5); v_z = x(6);
+    omega_x = x(10); omega_y = x(11); omega_z = x(12);
+    
+    % Extract control inputs (with equilibrium values)
+    F_eq = params.m * params.g; % Equilibrium thrust force
+    F = F_eq + u(1);           % Add control input to equilibrium
+    tau_phi = u(2); tau_theta = u(3); tau_psi = u(4);
+    
+    % Nonlinear equations
+    dx = zeros(12, 1);
+    dx(1:3) = [v_x; v_y; v_z]; % Position derivatives
+    dx(4) = -cos(phi)*sin(theta)*F/params.m; % v_x_dot
+    dx(5) = sin(phi)*F/params.m;            % v_y_dot
+    dx(6) = params.g - cos(phi)*cos(theta)*F/params.m; % v_z_dot
+    dx(7) = omega_x;           % phi_dot
+    dx(8) = omega_y;           % theta_dot
+    dx(9) = omega_z;           % psi_dot
+    dx(10) = tau_phi / params.J_x;  % omega_x_dot
+    dx(11) = tau_theta / params.J_y; % omega_y_dot
+    dx(12) = tau_psi / params.J_z;   % omega_z_dot
 end
